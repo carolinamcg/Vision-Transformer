@@ -27,19 +27,21 @@ class SaveBestModel:
         
     def __call__(
         self, current_valid_loss, 
-        epoch, model, optimizer, criterion,
+        epoch, model, optimizer, criterion, NoAmpt,
         path
     ):
         if current_valid_loss < self.best_valid_loss:
             self.best_valid_loss = current_valid_loss
-            print(f"\nBest validation loss: {self.best_valid_loss}")
-            print(f"\nSaving best model for epoch: {epoch}\n")
+            #print(f"\nBest validation loss: {self.best_valid_loss}")
+            print(f"Saving best model for epoch: {epoch}, Best validation loss: {self.best_valid_loss}\n")
             
+            if NoAmpt:
+                optimizer = optimizer.optimizer
             os.makedirs(path, exist_ok=True)
             torch.save({
                 'epoch': epoch,
                 'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.optimizer.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
                 'loss': criterion,
                 }, path+'best_model.pth')
 
@@ -120,12 +122,12 @@ class Dataset(torch.utils.data.Dataset):
 
 
 class Training:
-    def __init__(self, model, epochs, model_name, criterion=F.cross_entropy, 
+    def __init__(self, model, epochs, model_name, optimizer=None, criterion=F.cross_entropy, 
                 metrics= ["Loss", "Accuracy"], base_path=os.getcwd()):
         self.model = model
         self.metrics = metrics
         self.history = {'train_Loss': [], 'train_Accuracy': []}
-        self.optimizer = None
+        self.optimizer = optimizer #if this is not defined (None), the train funtction will use the NoAmOpt class
         self.epochs = epochs
         self.criterion = criterion
         self.model_name = model_name
@@ -143,9 +145,9 @@ class Training:
 
     def get_std_opt(self, training_steps, factor=2, warmup_rate=0.3, lr=0, betas=(0.9, 0.98), eps=1e-9, weight_decay=0.0):
         #training_steps = n_epohs* n_batches
-        return NoamOpt(self.model.encoder.d_model, factor, int(warmup_rate*training_steps),
+        return NoamOpt(self.model.d_model, factor, int(warmup_rate*training_steps),
                 torch.optim.Adam(self.model.parameters(), lr=lr, betas=betas, eps=eps, weight_decay=weight_decay))
-    
+    ''' 
     def initialise_w(self, model):
         # This was important from their code. 
         # Initialize parameters with Glorot / fan_avg.
@@ -153,18 +155,23 @@ class Training:
         for p in model.parameters():
             if p.dim() > 1 and p.dim() < 3: #only for linear layers' weights (no biases or conv layers w)
                 nn.init.xavier_uniform_(p)
+    '''
 
-    def save_model(self):
+    def save_model(self, NoAmpt):
         """
         Function to save the trained model to disk.
         """
         print(f"Saving final model...")
         path = self.base_path + 'weights/{}/'.format(self.model_name)
+        if NoAmpt:
+            optimizer = self.optimizer.optimizer
+        else:
+            optimizer = self.optimizer
         os.makedirs(path, exist_ok=True)
         torch.save({
                     'epoch': self.epochs,
                     'model_state_dict': self.model.state_dict(),
-                    'optimizer_state_dict': self.optimizer.optimizer.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
                     'loss': self.criterion,
                     }, path+'final_model.pth')
 
@@ -193,18 +200,19 @@ class Training:
 
 
     def train(self, train_loader, valid_loader=None, checkpoint_metric='val_Loss', 
-            initialise=True, factor=2, warmup_rate=0.3, lr=0, betas=(0.9, 0.99), eps=1e-9, 
+            factor=2, warmup_rate=0.3, lr=0, betas=(0.9, 0.99), eps=1e-9, 
             weight_decay=0.0, save_plots=True):
         
-        if initialise:
-            self.initialise_w(self.model)
-            print("Done!")
-        
+
         nb_batches_train = len(train_loader)
-        if self.optimizer == None:
+        NoAmpt = False
+        if self.optimizer==None:
+            print("Using NoamOpt class to define oprimizer and linearly increasing LR")
             training_steps = self.epochs * nb_batches_train
             self.optimizer = self.get_std_opt(training_steps, factor=2, warmup_rate=warmup_rate,
                                         lr=lr, betas=betas, eps=eps, weight_decay=weight_decay)
+            NoAmpt = True
+        assert self.optimizer is not None, "Define your optimizer"
         
         if valid_loader is not None:
             self.history['val_Loss']  = []
@@ -229,7 +237,7 @@ class Training:
                                                 #reduction=mean --> computes the mean loss over all samples in the batch
                                                 # this is important if you hacve batches with different sizes
                 
-                self.model.zero_grad()  # ③
+                self.model.zero_grad()  # ③ ==optimizer.zero_grad() if the model.parameters() are all inside that optimizer
 
                 loss.backward()  # ④
                 losses += loss.item()
@@ -239,24 +247,30 @@ class Training:
                 #train_acc += (out.argmax(1) == y.argmax(1)).cpu().numpy().mean() #mean over the images in the batch
                 train_acc += metrics.classification_accuracy(out, y)
             
-            print(f"Training loss at epoch {epoch} is {losses / nb_batches_train}")
-            print(f"Training accuracy: {train_acc / nb_batches_train}")
-
-            self.history['train_Loss'].append(losses / nb_batches_train)
-            self.history['train_Accuracy'].append(train_acc / nb_batches_train)
+            train_loss = losses / nb_batches_train
+            train_acc = train_acc / nb_batches_train
+            self.history['train_Loss'].append(train_loss)
+            self.history['train_Accuracy'].append(train_acc)
+            #print(f"Epoch {epoch}: train_loss={losses / nb_batches_train}, train_acc={train_acc / nb_batches_train}")
 
             if valid_loader is not None:
-                print('Evaluating on validation:')
-                self.evaluate(valid_loader)
+                #print('Evaluating on validation:')
+                val_loss, val_acc = self.evaluate(valid_loader)
+
+                print('Epoch {}: '.format(epoch) + 'train_loss={:6.4f}, '.format(train_loss) + 'train_acc={:6.4f}, '.format(train_acc) 
+                    + 'val_loss={:6.4f}, '.format(val_loss) + 'val_acc={:6.4f}, '.format(val_acc))
+            else:
+                print('Epoch {}:'.format(epoch) + 'train_loss={:6.4f}, '.format(train_loss) + 'train_acc={:6.4f}, '.format(train_acc))
+
 
             self.saver(
                  self.history[checkpoint_metric][-1], epoch, 
-                 self.model, self.optimizer, self.criterion,
+                 self.model, self.optimizer, self.criterion, NoAmpt,
                  path = self.base_path+'weights/{}/'.format(self.model_name)
             )
 
         # save the trained model weights for a final time
-        self.save_model()
+        self.save_model(NoAmpt)
         if save_plots:
             self.save_plots()
 
@@ -282,8 +296,9 @@ class Training:
             #acc += (out.argmax(1) == y.argmax(1)).cpu().numpy().mean()
             acc += metrics.classification_accuracy(out, y)
 
-        print(f"Eval loss: {losses / nb_batches}")
-        print(f"*************Eval accuracy: {acc / nb_batches}")
-
-        self.history['val_Loss'].append(losses / nb_batches)
-        self.history['val_Accuracy'].append(acc / nb_batches)
+        #print(f"**** val_loss: {losses / nb_batches}; val_acc: {acc / nb_batches}")
+        val_loss = losses / nb_batches
+        val_acc = acc / nb_batches
+        self.history['val_Loss'].append(val_loss)
+        self.history['val_Accuracy'].append(val_acc)
+        return val_loss, val_acc
