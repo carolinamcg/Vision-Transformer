@@ -312,7 +312,7 @@ class ViT(nn.Module):
                                     cnn=cnn, nchan_l1=nchan_l1, l1_kw=l1_kw, 
                                     nchan_l2=nchan_l2, l2_kw=l2_kw, nchan_l3=nchan_l3, l3_kw=l3_kw,
                                     class_token=class_token)
-        self.pos_embed = PositionalEncoding(d_model, embed_len, standard1Dpe)
+        self.pos_embed = PositionalEncoding(d_model, embed_len, standard1Dpe) if add_pos_emb else nn.Identity()
         self.pos_dropout = nn.Dropout(p=dropout_rate)
 
         self.enc_layers = nn.ModuleList()
