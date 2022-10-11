@@ -239,10 +239,9 @@ class Embeddings(nn.Module):
 
     def forward(self, x):
         x = self.patch_embeddings(x) #word_embeddings
-        bs, c, h, w = x.size()
+        #bs, c, h, w = x.size() #h and w=n_patches_per_dim
         # Here, x is a grid of embeddings.
-        #print(x.size(), self.special_token)
-        x = torch.reshape(x, (bs, -1, c)) #(bs, n_patches*n_patches, d_model)
+        x = x.flatten(2).transpose(1, 2) # (bs, c, h, w) --> (bs, c, h*w) --> (bs, h*w, c)
         #CHANNELS LAST
         # turning x into shape (bs, seq_length, d_model)
         return x
