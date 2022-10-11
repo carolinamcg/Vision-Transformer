@@ -214,7 +214,9 @@ class Embeddings(nn.Module):
                 padding='same'),
             nn.BatchNorm2d(nchan_l2),
             nn.ReLU(),
-            #nn.Dropout(p=0.25),
+            #nn.Dropout(p=0.25),sn't 
+                #consider the excedent rows/columns of the image
+                #number of patches = the smaller integer possible in h / patch_si
 
             nn.Conv2d(in_channels=nchan_l2,
                 out_channels=nchan_l3, #embedded_dimensions
@@ -268,7 +270,7 @@ class EncoderLayer(nn.Module):
         # Layer norm before MHA
         x_norm1 = self.layernorm1(x)  # (batch_size, input_seq_len, d_model)
         # Multi-head attention 
-        attn_output, _ = self.mha(x_norm1, x_norm1, x_norm1)  # (batch_size, input_seq_len, d_model)
+        attn_output, attn_weights = self.mha(x_norm1, x_norm1, x_norm1)  # (batch_size, input_seq_len, d_model), (bs, n_heads, q_length, k_length)
         x_DO = self.dropout1(attn_output) #NEEDED???????????
         x1 = x_DO + x
         
@@ -279,7 +281,7 @@ class EncoderLayer(nn.Module):
         #Final residual connection 
         x2 = x1 + cnn_output # (batch_size, input_seq_len, d_model)
 
-        return x2
+        return x2, attn_weights
 
 
 
@@ -317,6 +319,8 @@ class ViT(nn.Module):
         for _ in range(num_layers):
             self.enc_layers.append(EncoderLayer(d_model, num_heads, conv_hidden_dim, 
                     att_dropout_rate=att_dropout_rate, dropout_rate=dropout_rate))
+
+        self.attn_weights_dict = {} #saves the attention scores for each encoder layer/block and each head
         
         self.LayerNorm = nn.LayerNorm(d_model, eps=1e-12)
 
@@ -383,10 +387,11 @@ class ViT(nn.Module):
           x = self._pos_embed(x)
 
         for i in range(self.num_layers):
-            x = self.enc_layers[i](x)
+            x, A = self.enc_layers[i](x)
+            self.attn_weights_dict[f"layer_{i}"] = A
 
         x = self.LayerNorm(x)
-        return x  # (batch_size, input_seq_len, d_model)
+        return x # (batch_size, input_seq_len, d_model)
     
 
 
@@ -410,7 +415,7 @@ class ViT(nn.Module):
     def forward(self, x):
         x = self.forward_features(x) #(bs, seq_length, d_model)
         x = self.forward_head(x)
-        return x
+        return x, self.attn_weights_dict
 
     
 

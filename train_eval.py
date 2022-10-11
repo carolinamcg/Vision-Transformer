@@ -231,7 +231,7 @@ class Training:
                 y = y.to(device)
                 
                 #print("LEARNING RATE: ", optimizer._rate)
-                out = self.model(x)  # ①
+                out, _ = self.model(x)  # ①
 
                 loss = self.criterion(out, y)  #Cross_Entrpy = nn.LogSoftmax (last model layer) + F.NNL_loss
                                                 #reduction=mean --> computes the mean loss over all samples in the batch
@@ -287,7 +287,7 @@ class Training:
             x = x.to(device)
             y = y.to(device)
                     
-            out = self.model(x)
+            out, _ = self.model(x)
 
             loss = self.criterion(out, y)  # ②
                 
