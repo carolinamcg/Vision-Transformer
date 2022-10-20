@@ -21,8 +21,9 @@ class SaveBestModel:
     https://debuggercafe.com/saving-and-loading-the-best-model-in-pytorch/
     """
     def __init__(
-        self, best_valid_loss=float('inf')
+        self, debug=True, best_valid_loss=float('inf')
     ):
+        self.debug = debug
         self.best_valid_loss = best_valid_loss
         
     def __call__(
@@ -30,14 +31,27 @@ class SaveBestModel:
         epoch, model, optimizer, criterion, NoAmpt,
         path
     ):
+
+        if NoAmpt:
+            optimizer = optimizer.optimizer
+        os.makedirs(path, exist_ok=True)
+
+        if self.debug is True and epoch % 10 == 0:
+            #save weights in intervals of 10 epochs
+
+            torch.save({
+                'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'loss': criterion,
+                }, path + f'epoch{epoch}.pth')
+
+
         if current_valid_loss < self.best_valid_loss:
             self.best_valid_loss = current_valid_loss
             #print(f"\nBest validation loss: {self.best_valid_loss}")
             print(f"Saving best model for epoch: {epoch}, Best validation loss: {self.best_valid_loss}\n")
             
-            if NoAmpt:
-                optimizer = optimizer.optimizer
-            os.makedirs(path, exist_ok=True)
             torch.save({
                 'epoch': epoch,
                 'model_state_dict': model.state_dict(),
@@ -79,10 +93,10 @@ class NoamOpt:
             (self.model_size ** (-0.5) *
             min(step ** (-0.5), step * self.warmup ** (-1.5)))
         
-def get_std_opt(model, factor, training_steps, lr=0, betas=(0.9, 0.98), eps=1e-9, weight_decay=0.0):
-    #training_steps = n_epohs* n_batches
-    return NoamOpt(model.encoder.d_model, factor, 0.3*training_steps,
-            torch.optim.Adam(model.parameters(), lr=lr, betas=betas, eps=eps, weight_decay=weight_decay))
+#def get_std_opt(model, factor, training_steps, lr=0, betas=(0.9, 0.98), eps=1e-9, weight_decay=0.0):
+#   #training_steps = n_epohs* n_batches
+#    return NoamOpt(model.encoder.d_model, factor, 0.3*training_steps,
+#            torch.optim.Adam(model.parameters(), lr=lr, betas=betas, eps=eps, weight_decay=weight_decay))
 
 
 
@@ -123,7 +137,7 @@ class Dataset(torch.utils.data.Dataset):
 
 class Training:
     def __init__(self, model, epochs, model_name, optimizer=None, criterion=F.cross_entropy, 
-                metrics= ["Loss", "Accuracy"], base_path=os.getcwd()):
+                metrics= ["Loss", "Accuracy"], base_path=os.getcwd(), debug=True):
         self.model = model
         self.metrics = metrics
         self.history = {'train_Loss': [], 'train_Accuracy': []}
@@ -133,7 +147,7 @@ class Training:
         self.model_name = model_name
         #self.initialize = initialize
         self.base_path = base_path
-        self.saver = SaveBestModel()
+        self.saver = SaveBestModel(debug=debug)
 
     def print_parameters(self):
         # total parameters and trainable parameters
@@ -188,7 +202,7 @@ class Training:
             for k in self.history.keys():
                 if metric in k:
                     plt.plot(
-                        self.history[k], color='green', linestyle='-', 
+                        self.history[k], linestyle='-', 
                         label=k
                     )
 
@@ -207,9 +221,9 @@ class Training:
         nb_batches_train = len(train_loader)
         NoAmpt = False
         if self.optimizer==None:
-            print("Using NoamOpt class to define oprimizer and linearly increasing LR")
+            print("Using NoamOpt class to define optimizer and linearly increasing LR")
             training_steps = self.epochs * nb_batches_train
-            self.optimizer = self.get_std_opt(training_steps, factor=2, warmup_rate=warmup_rate,
+            self.optimizer = self.get_std_opt(training_steps, factor=factor, warmup_rate=warmup_rate,
                                         lr=lr, betas=betas, eps=eps, weight_decay=weight_decay)
             NoAmpt = True
         assert self.optimizer is not None, "Define your optimizer"
@@ -302,3 +316,33 @@ class Training:
         self.history['val_Loss'].append(val_loss)
         self.history['val_Accuracy'].append(val_acc)
         return val_loss, val_acc
+
+    def test(self, data_loader, load_weights=None):
+        if load_weights is not None:
+            print('Loading pre-trained model weights...')
+            self.model.load_state_dict(load_weights)
+        data_iterator = iter(data_loader)
+        nb_batches = len(data_loader)
+        self.model.eval()
+        acc = 0 
+        preds, targets, attn_w_dicts = [], [], []
+        with torch.no_grad():
+            for batch in data_iterator:
+                #self.model.eval()
+                x = batch[0].float()
+                y = batch[1].float()
+                x = x.to(device)
+                y = y.to(device)
+
+                out, A = self.model(x)
+            
+                acc += metrics.classification_accuracy(out, y)
+
+                preds.append(out.cpu().numpy())
+                attn_w_dicts.append(A) #A arrays are saved as torch tensors
+                targets.append(y.cpu().numpy())
+
+        print(f"Test Accuracy: {acc / nb_batches}")
+        return targets, preds, attn_w_dicts
+
+        

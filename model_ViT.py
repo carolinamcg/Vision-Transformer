@@ -347,20 +347,29 @@ class ViT(nn.Module):
 
 
         if weight_init: # != 'skip':
-            trunc_normal_(self.pos_embed.pe, std=.02)
+            trunc_normal_(self.pos_embed.pe, std=.02) #VIT_Jax Github
             if self.cls_token is not None:
-                nn.init.normal_(self.cls_token, std=1e-6)
+                nn.init.normal_(self.cls_token, std=1e-6) #init_weights function in pytorch github
             self.apply(self._init_weights)
+            #self._init_head(head_bias=0)
+            
 
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
             nn.init.xavier_uniform_(module.weight) #VIT_Jax Github
             #trunc_normal_(module.weight, std=.02) #""" ViT weight initialization, original timm impl (for reproducibility) """
             if module.bias is not None:
-                nn.init.normal_(module.bias, std=1e-6)
+                nn.init.normal_(module.bias, std=1e-6) #VIT_Jax Github
         elif isinstance(module, nn.Conv2d):
+            lecun_normal_(module.weight) #Variance Scaling - VIT_Jax Github (init_weights_vit_jax in pytorch github)
             if module.bias is not None:
-                nn.init.zeros_(module.bias)
+                nn.init.zeros_(module.bias) #VIT_Jax Github
+    
+    def _init_head(self, head_bias=0): #init_weights_vit_jax in pytorch github = VIT_Jax Github
+        for module in self.classifier:
+            if isinstance(module, nn.Linear):
+                nn.init.zeros_(module.weight)
+                nn.init.constant_(module.bias, head_bias)
 
 
 
